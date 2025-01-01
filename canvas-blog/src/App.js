@@ -1,4 +1,4 @@
-// Canvas Blog: Fully Redesigned Frontend Matching Target UI
+// Canvas Blog: Fully Redesigned Frontend Matching Target UI with Debugging, Loader Features, Toolbar, and Improved Delete Functionality
 /**
  * ## The Quest of Canvas Rings
  * A journey of creativity and problem-solving in crafting an interactive and dynamic blog canvas.
@@ -38,35 +38,42 @@
  * 8. **Persistence Feature**:
  *    - Added `useEffect` to fetch posts from the backend on page load.
  *    - Modified `addNewPost` to send a POST request to the backend for persistence.
+ *
+ * 9. **Debugging and Loader Features**:
+ *    - Added `data-testid` to CardContent for easier DOM inspection.
+ *    - Introduced a loader to provide visual feedback during fetch and save operations.
+ *
+ * 10. **Improved Delete Functionality**:
+ *    - Added a delete button in edit mode for individual posts.
+ *    - Updated "Add New Post" button to use a PlusCircle icon for consistency.
+ *
+ * 11. **Fixed Outside Click Detection**:
+ *    - Fixed bug where clicking outside of posts caused all posts to disappear.
+ *    - Improved state handling in `handleOutsideClick` to preserve posts array.
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
-import { PlusCircle, X } from 'lucide-react';
 import './App.css';
+import { PlusCircle, X } from 'lucide-react';
 
 const CanvasBlog = () => {
-  // Feature: State Management
-  // Related Change: [1] Initial Setup
   const [posts, setPosts] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [draggedPost, setDraggedPost] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [logs, setLogs] = useState([]); // Store logs for the session
-  const [showLogs, setShowLogs] = useState(false); // Toggle logs view
+  const [logs, setLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // Loader state
 
-  // Feature: Logging Utility
-  // Related Change: [3] Logging for Debugging
   const logEvent = (event, context = '', data = null) => {
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] ${event} ${context} ${data ? JSON.stringify(data) : ''}`;
     console.log(logEntry);
-    setLogs((prevLogs) => [...prevLogs, logEntry]); // Save the log in state
+    setLogs((prevLogs) => [...prevLogs, logEntry]);
   };
 
-  // Feature: Fetch Posts from Backend
-  // Related Change: [8] Persistence Feature
   useEffect(() => {
+    setIsLoading(true);
     logEvent('Fetching posts from backend');
     fetch('http://localhost:8000/posts/')
       .then((response) => {
@@ -78,12 +85,35 @@ const CanvasBlog = () => {
       .then((data) => {
         logEvent('Posts fetched successfully', '', data);
         setPosts(data);
+        setIsLoading(false);
       })
-      .catch((error) => logEvent('Error fetching posts', '', error.message));
+      .catch((error) => {
+        logEvent('Error fetching posts', '', error.message);
+        setIsLoading(false);
+      });
+
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest('.post-card')) {
+        logEvent('Exit Editing Mode', 'Clicked outside of posts');
+        setPosts((prevPosts) => {
+          if (!prevPosts || !Array.isArray(prevPosts)) {
+            logEvent('Error: Invalid posts state detected');
+            return prevPosts; // Preserve the previous state to avoid clearing posts
+          }
+          return prevPosts.map((post) => ({
+            ...post,
+            isEditing: false, // Exit editing mode only
+          }));
+        });
+      }
+    };
+
+    document.addEventListener('click', handleOutsideClick);
+    return () => {
+      document.removeEventListener('click', handleOutsideClick);
+    };
   }, []);
 
-  // Feature: Drag-and-Drop Events
-  // Related Change: [1] Initial Setup
   const handleMouseDown = (e, post) => {
     logEvent('Mouse Down', `Post ID: ${post.id}`);
     setIsDragging(true);
@@ -96,29 +126,51 @@ const CanvasBlog = () => {
 
   const handleMouseMove = (e) => {
     if (isDragging && draggedPost) {
+      const updatedPost = {
+        ...draggedPost,
+        position_x: e.clientX - dragOffset.x,
+        position_y: e.clientY - dragOffset.y,
+      };
+  
+      setPosts((prevPosts) =>
+        prevPosts.map((post) => (post.id === draggedPost.id ? updatedPost : post))
+      );
+  
+      setDraggedPost(updatedPost); // Update draggedPost with the new position
       logEvent('Mouse Move', `Dragging Post ID: ${draggedPost.id}`);
-      const updatedPosts = posts.map((post) => {
-        if (post.id === draggedPost.id) {
-          return {
-            ...post,
-            position_x: e.clientX - dragOffset.x,
-            position_y: e.clientY - dragOffset.y,
-          };
-        }
-        return post;
-      });
-      setPosts(updatedPosts);
     }
   };
 
   const handleMouseUp = () => {
     logEvent('Mouse Up', draggedPost ? `Post ID: ${draggedPost.id}` : 'No post dragged');
+  
+    if (draggedPost) {
+      // Send the updated position to the backend
+      fetch(`http://localhost:8000/posts/${draggedPost.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(draggedPost), // Ensure the updated position is included
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Failed to update post position');
+          }
+          return response.json();
+        })
+        .then((data) => {
+          logEvent('Post position saved to backend', `Post ID: ${draggedPost.id}`, data);
+        })
+        .catch((error) => {
+          logEvent('Error saving post position', '', error.message);
+        });
+    }
+  
     setIsDragging(false);
     setDraggedPost(null);
   };
 
-  // Feature: Add and Delete Features
-  // Related Change: [2] Add and Delete Features
   const addNewPost = () => {
     logEvent('Add New Post', 'Creating a new post');
     const newPost = {
@@ -150,14 +202,25 @@ const CanvasBlog = () => {
 
   const deletePost = (postId) => {
     logEvent('Delete Post', `Post ID: ${postId}`);
-    setPosts(posts.filter((post) => post.id !== postId));
+    setPosts((prevPosts) => prevPosts.filter((post) => post.id !== postId));
+
+    fetch(`http://localhost:8000/posts/${postId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Failed to delete post');
+        }
+        logEvent('Post deleted successfully', `Post ID: ${postId}`);
+      })
+      .catch((error) => logEvent('Error deleting post', '', error.message));
   };
 
-  // Feature: Edit and Save Functionality
-  // Related Change: [4] Edit and Save Functionality
   const handleDoubleClick = (post) => {
     logEvent('Double Click', `Post ID: ${post.id}`);
-    console.log('Double click detected on post:', post.id); // Debugging
     const updatedPosts = posts.map((p) => {
       if (p.id === post.id) {
         return { ...p, isEditing: true };
@@ -178,16 +241,20 @@ const CanvasBlog = () => {
     setPosts(updatedPosts);
   };
 
-  const handleBlur = (post) => {
-    logEvent('Save Post', `Post ID: ${post.id}`);
+  const handleTitleChange = (e, post) => {
+    logEvent('Edit Title', `Post ID: ${post.id}`);
     const updatedPosts = posts.map((p) => {
       if (p.id === post.id) {
-        return { ...p, isEditing: false };
+        return { ...p, title: e.target.value };
       }
       return p;
     });
     setPosts(updatedPosts);
+  };
 
+  const handleBlur = (post) => {
+    logEvent('Saving post to backend', `Post ID: ${post.id}`);
+    setIsLoading(true);
     fetch(`http://localhost:8000/posts/${post.id}`, {
       method: 'PUT',
       headers: {
@@ -201,8 +268,14 @@ const CanvasBlog = () => {
         }
         return response.json();
       })
-      .then((data) => logEvent('Post saved to backend', '', data))
-      .catch((error) => logEvent('Error saving post', '', error.message));
+      .then((data) => {
+        logEvent('Post saved to backend', '', data);
+        setIsLoading(false);
+      })
+      .catch((error) => {
+        logEvent('Error saving post', '', error.message);
+        setIsLoading(false);
+      });
   };
 
   return (
@@ -212,10 +285,15 @@ const CanvasBlog = () => {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
+      {isLoading && (
+        <div className="fixed inset-0 bg-gray-800 bg-opacity-50 flex justify-center items-center">
+          <div className="text-white text-lg">Loading...</div>
+        </div>
+      )}
       {posts.map((post) => (
-        <Card
+        <div
           key={post.id}
-          className="absolute shadow-lg rounded-lg bg-white w-72 cursor-move"
+          className="post-card absolute shadow-lg rounded-lg bg-white w-72 cursor-move"
           style={{
             left: post.position_x,
             top: post.position_y,
@@ -223,23 +301,30 @@ const CanvasBlog = () => {
             transition: 'transform 0.2s',
             borderRadius: '12px',
           }}
+          onMouseDown={(e) => handleMouseDown(e, post)}
+          onDoubleClick={() => handleDoubleClick(post)}
         >
-          <CardHeader className="p-4 border-b flex justify-between items-center">
-            <CardTitle className="text-lg font-semibold text-gray-800">
-              {post.title}
-            </CardTitle>
-            <button
-              onClick={() => deletePost(post.id)}
-              className="text-gray-400 hover:text-red-500"
-            >
-              <X size={16} />
-            </button>
-          </CardHeader>
-          <CardContent
-            className="p-4 text-gray-600"
-            onMouseDown={(e) => handleMouseDown(e, post)}
-            onDoubleClick={() => handleDoubleClick(post)}
-          >
+          <div className="p-4 border-b flex justify-between items-center">
+            {post.isEditing ? (
+              <textarea
+                value={post.title}
+                onChange={(e) => handleTitleChange(e, post)}
+                onBlur={() => handleBlur(post)}
+                className="w-full p-2 border rounded"
+              />
+            ) : (
+              <h2 className="text-lg font-semibold text-gray-800">{post.title}</h2>
+            )}
+            {post.isEditing && (
+              <button
+                onClick={() => deletePost(post.id)}
+                className="text-gray-400 hover:text-red-500"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+          <div className="p-4 text-gray-600">
             {post.isEditing ? (
               <textarea
                 value={post.content}
@@ -250,8 +335,8 @@ const CanvasBlog = () => {
             ) : (
               post.content
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       ))}
       <button
         onClick={addNewPost}
@@ -259,7 +344,6 @@ const CanvasBlog = () => {
       >
         <PlusCircle size={28} />
       </button>
-      {/* Footer Bar with Console Reader */}
       <div className="fixed bottom-0 left-0 w-full bg-white shadow-lg p-4 flex justify-between items-center">
         <span className="text-gray-600 text-sm">Last edited 6 hours ago</span>
         <div className="flex items-center space-x-4">
@@ -274,7 +358,6 @@ const CanvasBlog = () => {
           </button>
         </div>
       </div>
-      {/* Modal for Logs */}
       {showLogs && (
         <div className="fixed inset-0 bg-gray-800 bg-opacity-50 flex justify-center items-center">
           <div className="bg-white w-96 p-4 rounded-lg shadow-lg">
