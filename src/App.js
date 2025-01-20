@@ -1,69 +1,24 @@
-// Canvas Blog: Fully Redesigned Frontend Matching Target UI with Debugging, Loader Features, Toolbar, and Improved Delete Functionality
-/**
- * ## The Quest of Canvas Rings
- * A journey of creativity and problem-solving in crafting an interactive and dynamic blog canvas.
- * 
- * ### Code History and Improvements
- * 1. **Initial Setup**:
- *    - Created draggable cards (`posts`) to display content dynamically on the canvas.
- *    - Added basic mouse events (`onMouseDown`, `onMouseMove`, `onMouseUp`) for drag-and-drop functionality.
- *
- * 2. **Add and Delete Features**:
- *    - Implemented the "Add New Post" button to generate new cards dynamically.
- *    - Introduced the "Delete Post" button to remove specific cards.
- *
- * 3. **Logging for Debugging**:
- *    - Added `logEvent` utility to track actions (e.g., dragging, adding posts, deleting posts).
- *    - Added a `Logs` button in the footer to view logs within the app for easier debugging.
- *
- * 4. **Edit and Save Functionality**:
- *    - Introduced double-click functionality to toggle edit mode (`isEditing`) for posts.
- *    - Rendered `<textarea>` dynamically when a post is in edit mode.
- *    - Implemented `onBlur` to save changes to the backend using a PUT request.
- *
- * 5. **UI Design Improvements**:
- *    - Adjusted card styling to match the target UI (rounded corners, shadows).
- *    - Styled the footer bar to include "Publish" and "Logs" buttons.
- *    - Fixed overlapping of buttons (e.g., Add button and footer bar).
- *
- * 6. **Bug Fixes**:
- *    - Debugged issues with `onDoubleClick` not triggering properly.
- *    - Ensured `isEditing` is toggling correctly and `<textarea>` appears as expected.
- *    - Corrected API calls to point explicitly to the backend URL (`http://localhost:8000`).
- *
- * 7. **Feature for Logs Modal**:
- *    - Added a modal to display logs dynamically.
- *    - Included a "Close" button to hide the modal when not needed.
- *
- * 8. **Persistence Feature**:
- *    - Added `useEffect` to fetch posts from the backend on page load.
- *    - Modified `addNewPost` to send a POST request to the backend for persistence.
- *
- * 9. **Debugging and Loader Features**:
- *    - Added `data-testid` to CardContent for easier DOM inspection.
- *    - Introduced a loader to provide visual feedback during fetch and save operations.
- *
- * 10. **Improved Delete Functionality**:
- *    - Added a delete button in edit mode for individual posts.
- *    - Updated "Add New Post" button to use a PlusCircle icon for consistency.
- *
- * 11. **Fixed Outside Click Detection**:
- *    - Fixed bug where clicking outside of posts caused all posts to disappear.
- *    - Improved state handling in `handleOutsideClick` to preserve posts array.
- */
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import { PlusCircle, X } from 'lucide-react';
+import Matter from "matter-js";
 
 const CanvasBlog = () => {
+  const sceneRef = useRef(null); // Reference for the Matter.js canvas
+  const [engine, setEngine] = useState(null);
   const [posts, setPosts] = useState([]);
+  const postsRef = useRef([]); // Ref to hold posts with Matter.js bodies
   const [isDragging, setIsDragging] = useState(false);
   const [draggedPost, setDraggedPost] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [logs, setLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
   const [isLoading, setIsLoading] = useState(false); // Loader state
+  const [simulationStarted, setSimulationStarted] = useState(false); // Simulation flag
+  const [snapshotTaken, setSnapshotTaken] = useState(false); // Whether snapshot was taken
+  const [snapshots, setSnapshots] = useState([]); // To store snapshot history
+  const [showHistory, setShowHistory] = useState(false);  // Track visibility of Snapshot History
+
 
   const logEvent = (event, context = '', data = null) => {
     const timestamp = new Date().toISOString();
@@ -72,9 +27,55 @@ const CanvasBlog = () => {
     setLogs((prevLogs) => [...prevLogs, logEntry]);
   };
 
+  // Initialize Matter.js
   useEffect(() => {
+    // Initialize Matter.js engine
+    const engineInstance = Matter.Engine.create();
+    setEngine(engineInstance);
+
+    // Create and run the runner
+    const runner = Matter.Runner.create();
+    Matter.Runner.run(runner, engineInstance);
+
+    // Initialize renderer
+    const render = Matter.Render.create({
+      element: sceneRef.current,
+      engine: engineInstance,
+      options: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        wireframes: false,
+        background: "transparent", // Transparent to preserve UI
+      },
+    });
+
+    // Create the "Sun" at the center
+    const sun = Matter.Bodies.circle(window.innerWidth / 2, window.innerHeight / 2, 50, {
+      isStatic: true,
+      render: { fillStyle: "yellow" },
+    });
+    Matter.World.add(engineInstance.world, [sun]);
+
+    // Run the renderer
+    Matter.Render.run(render);
+
+    // Cleanup on unmount
+    return () => {
+      Matter.Render.stop(render);
+      Matter.Runner.stop(runner);
+      Matter.Engine.clear(engineInstance);
+      render.canvas.remove();
+      render.textures = {};
+    };
+  }, []);
+
+  // Fetch posts and handle outside clicks
+  useEffect(() => {
+    if (!engine) return; // Prevent running if engine is not initialized
+
     setIsLoading(true);
     logEvent('Fetching posts from backend');
+
     fetch('http://localhost:8000/posts/')
       .then((response) => {
         if (!response.ok) {
@@ -84,7 +85,32 @@ const CanvasBlog = () => {
       })
       .then((data) => {
         logEvent('Posts fetched successfully', '', data);
-        setPosts(data);
+        // Initialize posts with Matter.js bodies
+        const initializedPosts = data.map(post => {
+          const mass = post.mass || 5; // Default mass
+          const velocity = post.velocity || 0.02; // Default velocity
+          const orbitRadius = post.orbitRadius || 150; // Default orbit radius
+          const angle = post.angle || Math.random() * Math.PI * 2; // Default angle
+
+          const postBody = Matter.Bodies.circle(post.position_x, post.position_y, 20, {
+            mass: mass,
+            render: {
+              fillStyle: `hsl(${Math.random() * 360}, 70%, 50%)`, // Random color
+            },
+          });
+
+          // Attach orbit properties
+          postBody.orbitRadius = orbitRadius;
+          postBody.orbitAngle = angle;
+          postBody.orbitSpeed = velocity;
+
+          Matter.World.add(engine.world, [postBody]);
+
+          return { ...post, body: postBody };
+        });
+
+        postsRef.current = initializedPosts;
+        setPosts([...postsRef.current]);
         setIsLoading(false);
       })
       .catch((error) => {
@@ -100,19 +126,22 @@ const CanvasBlog = () => {
             logEvent('Error: Invalid posts state detected');
             return prevPosts; // Preserve the previous state to avoid clearing posts
           }
-          return prevPosts.map((post) => ({
+          const updatedPosts = prevPosts.map((post) => ({
             ...post,
             isEditing: false, // Exit editing mode only
           }));
+          postsRef.current = updatedPosts;
+          return [...updatedPosts];
         });
       }
     };
 
     document.addEventListener('click', handleOutsideClick);
+
     return () => {
       document.removeEventListener('click', handleOutsideClick);
     };
-  }, []);
+  }, [engine]);
 
   const handleMouseDown = (e, post) => {
     logEvent('Mouse Down', `Post ID: ${post.id}`);
@@ -122,6 +151,11 @@ const CanvasBlog = () => {
       x: e.clientX - post.position_x,
       y: e.clientY - post.position_y,
     });
+
+    // Pause physics for the dragged post
+    if (post.body) {
+      Matter.Body.setStatic(post.body, true);
+    }
   };
 
   const handleMouseMove = (e) => {
@@ -131,27 +165,36 @@ const CanvasBlog = () => {
         position_x: e.clientX - dragOffset.x,
         position_y: e.clientY - dragOffset.y,
       };
-  
-      setPosts((prevPosts) =>
-        prevPosts.map((post) => (post.id === draggedPost.id ? updatedPost : post))
+
+      postsRef.current = postsRef.current.map((post) =>
+        post.id === draggedPost.id ? updatedPost : post
       );
-  
-      setDraggedPost(updatedPost); // Update draggedPost with the new position
+
+      setPosts([...postsRef.current]); // Trigger re-render
+
       logEvent('Mouse Move', `Dragging Post ID: ${draggedPost.id}`);
+
+      // Update Matter.js body position if exists
+      if (draggedPost.body) {
+        Matter.Body.setPosition(draggedPost.body, { x: updatedPost.position_x, y: updatedPost.position_y });
+      }
     }
   };
 
   const handleMouseUp = () => {
     logEvent('Mouse Up', draggedPost ? `Post ID: ${draggedPost.id}` : 'No post dragged');
-  
+
     if (draggedPost) {
+      // Destructure to exclude 'body'
+      const { body, ...postData } = draggedPost;
+
       // Send the updated position to the backend
       fetch(`http://localhost:8000/posts/${draggedPost.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(draggedPost), // Ensure the updated position is included
+        body: JSON.stringify(postData), // Use 'postData' instead of 'draggedPost'
       })
         .then((response) => {
           if (!response.ok) {
@@ -165,44 +208,161 @@ const CanvasBlog = () => {
         .catch((error) => {
           logEvent('Error saving post position', '', error.message);
         });
+
+      // Resume physics for the dragged post
+      if (draggedPost.body) {
+        Matter.Body.setStatic(draggedPost.body, false);
+      }
     }
-  
+
     setIsDragging(false);
     setDraggedPost(null);
   };
 
   const addNewPost = () => {
     logEvent('Add New Post', 'Creating a new post');
+    const randomMass = Math.random() * 10 + 1; // Random mass
+    const randomSpeed = Math.random() * 0.05 + 0.01; // Random orbital speed
+    const orbitRadius = Math.random() * 200 + 100; // Random orbit radius
+    const angle = Math.random() * Math.PI * 2; // Random initial angle
+
+    const position_x = window.innerWidth / 2 + orbitRadius * Math.cos(angle);
+    const position_y = window.innerHeight / 2 + orbitRadius * Math.sin(angle);
+
     const newPost = {
       id: Date.now(),
-      title: 'New Post',
-      content: 'Click to edit...',
-      position_x: Math.random() * (window.innerWidth - 300),
-      position_y: Math.random() * (window.innerHeight - 200),
+      title: "New Post",
+      content: "Click to edit...",
+      position_x,
+      position_y,
+      mass: randomMass,
+      velocity: randomSpeed,
+      angle,
+      orbitRadius,
     };
-    fetch('http://localhost:8000/posts/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+
+    // Create Matter.js Body for the new post
+    const postBody = Matter.Bodies.circle(position_x, position_y, 20, {
+      mass: randomMass,
+      render: {
+        fillStyle: `hsl(${Math.random() * 360}, 70%, 50%)`, // Random color
       },
-      body: JSON.stringify(newPost),
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Failed to add new post');
-        }
-        return response.json();
-      })
-      .then((data) => {
-        logEvent('New Post added to backend', '', data);
-        setPosts([...posts, data]);
-      })
-      .catch((error) => logEvent('Error adding new post', '', error.message));
+    });
+
+    // Attach orbit properties to the Matter.js Body
+    postBody.orbitRadius = orbitRadius;
+    postBody.orbitAngle = angle;
+    postBody.orbitSpeed = randomSpeed;
+
+    // Add postBody to the Matter.js world
+    if (engine) {
+      Matter.World.add(engine.world, [postBody]);
+    }
+
+    // Update the ref and state
+    const updatedPosts = [
+      ...postsRef.current,
+      { ...newPost, body: postBody },
+    ];
+    postsRef.current = updatedPosts;
+    setPosts([...postsRef.current]); // Trigger re-render
   };
 
+  const startSimulation = () => {
+    if (simulationStarted) {
+      console.log("Simulation already started");
+      return;
+    }
+
+    console.log("Start Simulation button clicked"); // Confirmation log
+    if (!engine) return;
+
+    Matter.Events.on(engine, "beforeUpdate", () => {
+      console.log("beforeUpdate event triggered"); // Confirmation log
+      postsRef.current = postsRef.current.map((post) => {
+        const body = post.body;
+        if (!body) return post;
+
+        // Update the orbit angle
+        body.orbitAngle += body.orbitSpeed;
+
+        // Calculate new position
+        const newX = window.innerWidth / 2 + body.orbitRadius * Math.cos(body.orbitAngle);
+        const newY = window.innerHeight / 2 + body.orbitRadius * Math.sin(body.orbitAngle);
+
+        // Update Matter.js body position
+        Matter.Body.setPosition(body, { x: newX, y: newY });
+
+        return {
+          ...post,
+          position_x: newX,
+          position_y: newY,
+        };
+      });
+
+      // Trigger re-render
+      setPosts([...postsRef.current]);
+    });
+
+    setSimulationStarted(true); // Update the state flag
+  };
+
+  const stopSimulation = () => {
+    if (!simulationStarted) {
+      console.log("Simulation is not running");
+      return;
+    }
+
+    console.log("Stop Simulation button clicked");
+
+    Matter.Events.off(engine, "beforeUpdate");
+
+    setSimulationStarted(false);
+  };
+  
+  const takeSnapshot = () => {
+    // Take snapshot of current posts' states (position, size, etc.)
+    const snapshot = posts.map((post) => ({
+      id: post.id,
+      position_x: post.position_x,
+      position_y: post.position_y,
+      title: post.title,
+      content: post.content,
+    }));
+  
+    // Add snapshot to the snapshots history
+    setSnapshots((prevSnapshots) => [
+      ...prevSnapshots,
+      {
+        version: prevSnapshots.length + 1,
+        timestamp: new Date().toISOString(),
+        snapshot: snapshot,
+      },
+    ]);
+    setSnapshotTaken(true);
+    logEvent("Snapshot taken", "", snapshot);
+  };  
+
+  const viewSnapshot = (snapshotVersion) => {
+    // Set the posts state to match the snapshot version selected
+    const snapshot = snapshots.find(
+      (snap) => snap.version === snapshotVersion
+    );
+    if (snapshot) {
+      const updatedPosts = snapshot.snapshot.map((postData) => ({
+        ...posts.find((post) => post.id === postData.id),
+        ...postData,
+      }));
+  
+      setPosts(updatedPosts);
+      logEvent("Viewing Snapshot", `Version: ${snapshotVersion}`);
+    }
+  };
+  
   const deletePost = (postId) => {
     logEvent('Delete Post', `Post ID: ${postId}`);
-    setPosts((prevPosts) => prevPosts.filter((post) => post.id !== postId));
+    postsRef.current = postsRef.current.filter((post) => post.id !== postId);
+    setPosts([...postsRef.current]); // Trigger re-render
 
     fetch(`http://localhost:8000/posts/${postId}`, {
       method: 'DELETE',
@@ -221,46 +381,53 @@ const CanvasBlog = () => {
 
   const handleDoubleClick = (post) => {
     logEvent('Double Click', `Post ID: ${post.id}`);
-    const updatedPosts = posts.map((p) => {
+    const updatedPosts = postsRef.current.map((p) => {
       if (p.id === post.id) {
         return { ...p, isEditing: true };
       }
       return p;
     });
-    setPosts(updatedPosts);
+    postsRef.current = updatedPosts;
+    setPosts([...postsRef.current]); // Trigger re-render
   };
 
   const handleContentChange = (e, post) => {
     logEvent('Edit Post', `Post ID: ${post.id}`);
-    const updatedPosts = posts.map((p) => {
+    const updatedPosts = postsRef.current.map((p) => {
       if (p.id === post.id) {
         return { ...p, content: e.target.value };
       }
       return p;
     });
-    setPosts(updatedPosts);
+    postsRef.current = updatedPosts;
+    setPosts([...postsRef.current]); // Trigger re-render
   };
 
   const handleTitleChange = (e, post) => {
     logEvent('Edit Title', `Post ID: ${post.id}`);
-    const updatedPosts = posts.map((p) => {
+    const updatedPosts = postsRef.current.map((p) => {
       if (p.id === post.id) {
         return { ...p, title: e.target.value };
       }
       return p;
     });
-    setPosts(updatedPosts);
+    postsRef.current = updatedPosts;
+    setPosts([...postsRef.current]); // Trigger re-render
   };
 
   const handleBlur = (post) => {
     logEvent('Saving post to backend', `Post ID: ${post.id}`);
     setIsLoading(true);
+
+    // Destructure to exclude 'body'
+    const { body, ...postData } = post;
+
     fetch(`http://localhost:8000/posts/${post.id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(post),
+      body: JSON.stringify(postData), // Use 'postData' instead of 'post'
     })
       .then((response) => {
         if (!response.ok) {
@@ -277,6 +444,20 @@ const CanvasBlog = () => {
         setIsLoading(false);
       });
   };
+    
+    // Function to toggle Snapshot History visibility
+    const toggleSnapshotHistory = () => {
+      setShowHistory(!showHistory);  // Toggle the visibility of Snapshot History
+    };
+
+    const listRef = useRef(null);  // Create a reference for the list container
+    
+    // Automatically scroll to the bottom whenever snapshots change
+      useEffect(() => {
+        if (listRef.current) {
+          listRef.current.scrollTop = listRef.current.scrollHeight;
+        }
+      }, [snapshots]); // This effect will run every time snapshots change
 
   return (
     <div
@@ -285,11 +466,25 @@ const CanvasBlog = () => {
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
+      {/* Simulation canvas (background layer) */}
+      <div
+        ref={sceneRef}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: -1, // Ensures the canvas stays behind the UI
+        }}
+      ></div>
+
       {isLoading && (
         <div className="fixed inset-0 bg-gray-800 bg-opacity-50 flex justify-center items-center">
           <div className="text-white text-lg">Loading...</div>
         </div>
       )}
+
       {posts.map((post) => (
         <div
           key={post.id}
@@ -297,7 +492,7 @@ const CanvasBlog = () => {
           style={{
             left: post.position_x,
             top: post.position_y,
-            transform: draggedPost?.id === post.id ? 'scale(1.02)' : 'scale(1)',
+            transform: isDragging && draggedPost?.id === post.id ? 'scale(1.02)' : 'scale(1)',
             transition: 'transform 0.2s',
             borderRadius: '12px',
           }}
@@ -338,24 +533,96 @@ const CanvasBlog = () => {
           </div>
         </div>
       ))}
+
       <button
         onClick={addNewPost}
         className="fixed bottom-20 right-6 bg-blue-500 text-white p-4 rounded-full shadow-md hover:bg-blue-600 transition-all"
       >
         <PlusCircle size={28} />
       </button>
+      <button
+        onClick={startSimulation}
+        className="fixed bottom-20 right-24 bg-green-500 text-white p-4 rounded-full shadow-md hover:bg-green-600 transition-all"
+      >
+        Start Simulation
+      </button>
+     
+      {/*<button
+      onClick={takeSnapshot}
+      className="fixed bottom-12 right-24 bg-yellow-500 text-white p-4 rounded-full shadow-md hover:bg-yellow-600 transition-all"
+      >
+        Take Snapshot
+      </button>*/}
+
+      {/*snapshotTaken && (
+        <div
+          onClick={toggleSnapshotHistory}  // Toggle Snapshot History visibility
+          className="fixed bottom-12 right-36 bg-green-500 text-white p-2 rounded-full shadow-md hover:bg-green-600 transition-all"
+        >
+          Snapshot Taken
+        </div>
+      )*/}
+
+
+      {showHistory && snapshots.length > 0 && (
+        <div className="fixed bottom-24 right-6 bg-white p-4 shadow-lg rounded-lg">
+          <h2 className="text-lg font-semibold mb-4">Snapshot History</h2>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {snapshots.map((snap, index) => (
+              <button
+                key={snap.version}
+                onClick={() => viewSnapshot(snap.version)}
+                className={`block text-left bg-gray-200 hover:bg-gray-300 p-2 rounded-md w-auto transition-all
+                  ${index === snapshots.length - 1 ? 'bg-green-100 animate-pulse' : ''}`} // Highlight new entry
+              >
+                Version {snap.version} - {new Date(snap.timestamp).toLocaleString()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+  
+      <button
+        onClick={stopSimulation}
+        className="fixed bottom-20 right-42 bg-red-500 text-white p-4 rounded-full shadow-md hover:bg-red-600 transition-all"
+      >
+        Stop Simulation
+      </button>
       <div className="fixed bottom-0 left-0 w-full bg-white shadow-lg p-4 flex justify-between items-center">
         <span className="text-gray-600 text-sm">Last edited 6 hours ago</span>
         <div className="flex items-center space-x-4">
+          
+
+        {/*snapshotTaken && (
+        <div
+          onClick={toggleSnapshotHistory}  // Toggle Snapshot History visibility
+          className="fixed bottom-12 right-36 bg-green-500 text-white p-2 rounded-full shadow-md hover:bg-green-600 transition-all"
+        >
+          Snapshot Taken
+        </div>
+        )*/}
+          <button 
+            onClick={toggleSnapshotHistory}  // Toggle Snapshot History visibility
+            className="py-2 px-1 bg-yellow-500 text-white p-2 rounded-lg shadow-md hover:bg-yellow-600 transition-all" 
+            //formerly named L-Snapshot Taken, now call a fancy name: Time Travel
+          >
+            Time-Travel
+            
+          </button> 
+        
+
           <button
             onClick={() => setShowLogs(true)}
             className="text-gray-600 hover:text-gray-900"
           >
             Logs
           </button>
-          <button className="bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600">
-            Publish
+          <button
+          onClick={takeSnapshot}  //formerly named P-Take Snapshot, now called Snapshot
+          className="bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600"> 
+            Snapshot
           </button>
+
         </div>
       </div>
       {showLogs && (
