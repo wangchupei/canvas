@@ -143,6 +143,30 @@ const CanvasBlog = () => {
     };
   }, [engine]);
 
+  // Fetch snapshots from the backend when the app loads
+useEffect(() => {
+  fetch('http://localhost:8000/snapshots/')
+      .then((response) => {
+          if (!response.ok) {
+              throw new Error('Failed to fetch snapshots');
+          }
+          return response.json();
+      })
+      .then((data) => {
+          // Set the snapshots state with data from the backend
+          console.log('Snapshots fetched from backend:', data);
+          setSnapshots(
+              data.map((snapshot) => ({
+                version: snapshot.version || 0,
+                timestamp: snapshot.timestamp || new Date().toISOString(),
+                snapshot: snapshot.snapshot_data || [],
+              }))
+          );
+          logEvent('Snapshots loaded from backend');
+      })
+      .catch((error) => logEvent('Error loading snapshots', '', error.message));
+}, []); // Run only on initial render
+
   const handleMouseDown = (e, post) => {
     logEvent('Mouse Down', `Post ID: ${post.id}`);
     setIsDragging(true);
@@ -220,6 +244,7 @@ const CanvasBlog = () => {
   };
 
   const addNewPost = () => {
+    console.log(postsRef.current.map((post) => post.id)); // Check for duplicates or undefined IDs
     logEvent('Add New Post', 'Creating a new post');
     const randomMass = Math.random() * 10 + 1; // Random mass
     const randomSpeed = Math.random() * 0.05 + 0.01; // Random orbital speed
@@ -229,44 +254,98 @@ const CanvasBlog = () => {
     const position_x = window.innerWidth / 2 + orbitRadius * Math.cos(angle);
     const position_y = window.innerHeight / 2 + orbitRadius * Math.sin(angle);
 
-    const newPost = {
-      id: Date.now(),
-      title: "New Post",
-      content: "Click to edit...",
-      position_x,
-      position_y,
-      mass: randomMass,
-      velocity: randomSpeed,
-      angle,
-      orbitRadius,
-    };
-
-    // Create Matter.js Body for the new post
+    // Create a Matter.js body immediately
     const postBody = Matter.Bodies.circle(position_x, position_y, 20, {
-      mass: randomMass,
-      render: {
-        fillStyle: `hsl(${Math.random() * 360}, 70%, 50%)`, // Random color
-      },
+        mass: randomMass,
+        render: {
+            fillStyle: `hsl(${Math.random() * 360}, 70%, 50%)`, // Random color
+        },
     });
 
-    // Attach orbit properties to the Matter.js Body
+    // Attach orbit properties to the Matter.js body
     postBody.orbitRadius = orbitRadius;
     postBody.orbitAngle = angle;
     postBody.orbitSpeed = randomSpeed;
 
-    // Add postBody to the Matter.js world
+    // Add the Matter.js body to the simulation
     if (engine) {
-      Matter.World.add(engine.world, [postBody]);
+        Matter.World.add(engine.world, [postBody]);
     }
 
-    // Update the ref and state
-    const updatedPosts = [
-      ...postsRef.current,
-      { ...newPost, body: postBody },
-    ];
-    postsRef.current = updatedPosts;
+    // Create a temporary post object
+    const tempPost = {
+        id: `temp-${Date.now()}`, // Use a unique identifier for temporary posts
+        title: "New Post",
+        content: "Click to edit...",
+        position_x,
+        position_y,
+        dimensions: {}, // Placeholder for dimensions
+        user_id: "guest",
+        mass: randomMass,
+        velocity: randomSpeed,
+        angle,
+        orbitRadius,
+        body: postBody, // Attach Matter.js body
+        isTemporary: true, // Flag as temporary
+    };
+
+    // Update state with the temporary post
+    postsRef.current = [...postsRef.current, tempPost];
     setPosts([...postsRef.current]); // Trigger re-render
-  };
+
+    // Send the post to the backend
+    fetch('http://localhost:8000/posts/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            title: "New Post",
+            content: "Click to edit...",
+            position_x,
+            position_y,
+            dimensions: {},
+            user_id: "guest",
+        }),
+    })
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error('Failed to save post');
+            }
+            return response.json();
+        })
+        .then((savedPost) => {
+            // Replace the temporary post with the backend response
+            postsRef.current = postsRef.current.map((post) =>
+                post.isTemporary && post.body === postBody
+                    ? {
+                          ...savedPost,
+                          mass: post.mass,
+                          velocity: post.velocity,
+                          angle: post.angle,
+                          orbitRadius: post.orbitRadius,
+                          body: post.body, // Preserve the Matter.js body
+                          isTemporary: false, // Mark as permanent
+                      }
+                    : post
+            );
+            setPosts([...postsRef.current]); // Trigger re-render
+            logEvent('New post added successfully', '', savedPost);
+        })
+        .catch((error) => {
+            logEvent('Error saving post', '', error.message);
+
+            // Remove the temporary post in case of an error
+            postsRef.current = postsRef.current.filter((post) => post.body !== postBody);
+            setPosts([...postsRef.current]); // Trigger re-render
+            if (engine) {
+                Matter.World.remove(engine.world, postBody); // Remove the body from the simulation
+            }
+        });
+};
+
+
+
 
   const startSimulation = () => {
     if (simulationStarted) {
@@ -321,43 +400,76 @@ const CanvasBlog = () => {
   };
   
   const takeSnapshot = () => {
-    // Take snapshot of current posts' states (position, size, etc.)
     const snapshot = posts.map((post) => ({
-      id: post.id,
-      position_x: post.position_x,
-      position_y: post.position_y,
-      title: post.title,
-      content: post.content,
+        id: post.id || Date.now(), // Generate a unique ID if not present
+        position_x: post.position_x,
+        position_y: post.position_y,
+        title: post.title,
+        content: post.content,
+        created_at: post.created_at || new Date().toISOString(), // Default timestamp
+        dimensions: post.dimensions || {}, // Default to an empty object
+        user_id: post.user_id || "guest", // Default user
     }));
-  
-    // Add snapshot to the snapshots history
-    setSnapshots((prevSnapshots) => [
-      ...prevSnapshots,
-      {
-        version: prevSnapshots.length + 1,
-        timestamp: new Date().toISOString(),
-        snapshot: snapshot,
-      },
-    ]);
-    setSnapshotTaken(true);
-    logEvent("Snapshot taken", "", snapshot);
-  };  
 
-  const viewSnapshot = (snapshotVersion) => {
-    // Set the posts state to match the snapshot version selected
-    const snapshot = snapshots.find(
-      (snap) => snap.version === snapshotVersion
-    );
-    if (snapshot) {
-      const updatedPosts = snapshot.snapshot.map((postData) => ({
-        ...posts.find((post) => post.id === postData.id),
-        ...postData,
-      }));
-  
-      setPosts(updatedPosts);
-      logEvent("Viewing Snapshot", `Version: ${snapshotVersion}`);
-    }
-  };
+    fetch('http://localhost:8000/snapshots/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            version: snapshots.length + 1,
+            snapshot_data: snapshot,
+        }),
+    })
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error('Failed to save snapshot');
+            }
+            return response.json();
+        })
+        .then(() => {
+            logEvent('Snapshot saved to backend');
+            setSnapshots((prevSnapshots) => [
+                ...prevSnapshots,
+                {
+                    version: snapshots.length + 1,
+                    timestamp: new Date().toISOString(),
+                    snapshot: snapshot,
+                },
+            ]);
+            setSnapshotTaken(true);
+            logEvent('Snapshot added to history locally');
+        })
+        .catch((error) => logEvent('Error saving snapshot', '', error.message));
+};
+
+
+const viewSnapshot = (snapshotVersion) => {
+  // Fetch snapshots from the backend
+  fetch('http://localhost:8000/snapshots/')
+      .then((response) => {
+          if (!response.ok) {
+              throw new Error('Failed to fetch snapshots');
+          }
+          return response.json();
+      })
+      .then((data) => {
+          // Find the snapshot by version
+          const snapshot = data.find((snap) => snap.version === snapshotVersion);
+          if (snapshot) {
+              // Update the posts state with the snapshot data
+              setPosts(snapshot.snapshot_data.map((post) => ({
+                  ...post,
+                  body: null, // Reset body if Matter.js body exists
+              })));
+              logEvent('Viewing Snapshot', `Version: ${snapshotVersion}`);
+          } else {
+              logEvent('Snapshot not found', `Version: ${snapshotVersion}`);
+          }
+      })
+      .catch((error) => logEvent('Error fetching snapshots', '', error.message));
+};
+
   
   const deletePost = (postId) => {
     logEvent('Delete Post', `Post ID: ${postId}`);

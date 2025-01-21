@@ -1,4 +1,4 @@
-# Updated Backend: Compatibility Fixes and Incremental Design
+# Backend with Snapshot Functionality
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -41,8 +41,16 @@ def init_db():
             content TEXT NOT NULL,
             position_x REAL NOT NULL DEFAULT 0,
             position_y REAL NOT NULL DEFAULT 0,
-            dimensions TEXT DEFAULT '{}',  -- Serialized JSON string for future properties
+            dimensions TEXT DEFAULT '{}',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version INTEGER NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            snapshot_data TEXT NOT NULL
         )
     ''')
     conn.commit()
@@ -57,6 +65,7 @@ class PostBase(BaseModel):
     position_y: float = 0
     dimensions: Optional[dict] = {}
     user_id: Optional[str] = "guest"
+    created_at: Optional[datetime] = None  # Optional for newly created posts
 
 class PostCreate(PostBase):
     pass
@@ -65,8 +74,11 @@ class Post(PostBase):
     id: int
     created_at: datetime
 
-# API Endpoints
+class Snapshot(BaseModel):
+    version: int
+    snapshot_data: List[Post]
 
+# API Endpoints
 @app.get("/posts/", response_model=List[Post])
 async def get_posts():
     """Retrieve all posts."""
@@ -76,7 +88,6 @@ async def get_posts():
     try:
         posts = c.execute('SELECT * FROM posts ORDER BY created_at DESC').fetchall()
         logger.info(f"Fetched {len(posts)} posts.")
-        # Deserialize dimensions field from JSON string to dictionary
         return [
             {**dict(post), "dimensions": json.loads(post["dimensions"] or "{}")}
             for post in posts
@@ -147,6 +158,60 @@ async def delete_post(id: int):
         return {"message": "Post deleted successfully"}
     except Exception as e:
         logger.error(f"Error deleting a post: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
+@app.post("/snapshots/")
+async def save_snapshot(snapshot: Snapshot):
+    """Save a new snapshot."""
+    logger.info(f"Incoming snapshot payload: {snapshot}")
+    conn = get_db_connection()
+    c = conn.cursor()
+    try:
+        # Convert Post objects to dictionaries and format datetime
+        snapshot_data = json.dumps([
+            {**post.dict(), "created_at": post.created_at.isoformat()}
+            for post in snapshot.snapshot_data
+        ])
+        logger.info(f"Serialized snapshot data: {snapshot_data}")
+        c.execute(
+            '''
+            INSERT INTO snapshots (version, snapshot_data)
+            VALUES (?, ?)
+            ''',
+            (snapshot.version, snapshot_data)
+        )
+        conn.commit()
+        logger.info(f"Snapshot saved: Version {snapshot.version}")
+        return {"message": "Snapshot saved successfully"}
+    except Exception as e:
+        logger.error(f"Error saving snapshot: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
+
+
+@app.get("/snapshots/", response_model=List[dict])
+async def get_snapshots():
+    """Retrieve all snapshots."""
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    try:
+        snapshots = c.execute('SELECT * FROM snapshots ORDER BY version DESC').fetchall()
+        return [
+            {
+                "id": row["id"],
+                "version": row["version"],
+                "timestamp": row["timestamp"],
+                "snapshot_data": json.loads(row["snapshot_data"])
+            }
+            for row in snapshots
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching snapshots: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         conn.close()
