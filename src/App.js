@@ -430,12 +430,12 @@ useEffect(() => {
         .then(() => {
             logEvent('Snapshot saved to backend');
             setSnapshots((prevSnapshots) => [
-                ...prevSnapshots,
+               
                 {
                     version: snapshots.length + 1,
                     timestamp: new Date().toISOString(),
                     snapshot: snapshot,
-                },
+                }, ...prevSnapshots,
             ]);
             setSnapshotTaken(true);
             logEvent('Snapshot added to history locally');
@@ -565,11 +565,12 @@ const viewSnapshot = (snapshotVersion) => {
     const listRef = useRef(null);  // Create a reference for the list container
     
     // Automatically scroll to the bottom whenever snapshots change
-      useEffect(() => {
-        if (listRef.current) {
-          listRef.current.scrollTop = listRef.current.scrollHeight;
-        }
-      }, [snapshots]); // This effect will run every time snapshots change
+    //  useEffect(() => {
+    //    if (listRef.current) {
+    //      listRef.current.scrollTop = listRef.current.scrollHeight;
+    //    }
+    //  }, [snapshots]); // This effect will run every time snapshots change
+    
 
   return (
     <div
@@ -685,7 +686,7 @@ const viewSnapshot = (snapshotVersion) => {
                 key={snap.version}
                 onClick={() => viewSnapshot(snap.version)}
                 className={`block text-left bg-gray-200 hover:bg-gray-300 p-2 rounded-md w-auto transition-all
-                  ${index === snapshots.length - 1 ? 'bg-green-100 animate-pulse' : ''}`} // Highlight new entry
+                  ${index === 0 ? 'bg-green-100 animate-pulse' : ''}`} // Highlight new entry
               >
                 Version {snap.version} - {new Date(snap.timestamp).toLocaleString()}
               </button>
